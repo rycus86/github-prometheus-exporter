@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"github.com/google/go-github/github"
 	"github.com/gregjones/httpcache"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
@@ -15,149 +15,16 @@ import (
 	"time"
 )
 
-// multi-valued flag type
-type multiVar []string
-
-func (mv *multiVar) Set(value string) error {
-	*mv = append(*mv, value)
-	return nil
-}
-
-func (mv *multiVar) String() string {
-	all := ""
-	for _, item := range *mv {
-		if all != "" {
-			all += ", "
-		}
-
-		all += item
-	}
-
-	return "[" + all + "]"
-}
-
-// flags
-var (
-	port     = flag.Int("port", 8080, "The HTTP port to listen on (default: 8080)")
-	interval = flag.Duration("interval", 1*time.Hour, "Interval between checks (default: 1h)")
-	owners   multiVar
-)
-
-// metrics
-type Metric struct {
-	Name      string
-	Extractor func(repository *github.Repository) *int
-
-	gauge *prometheus.GaugeVec
-}
-
-func (m *Metric) Update(repository *github.Repository) {
-	if value := m.Extractor(repository); value != nil {
-		m.gauge.WithLabelValues(
-			repository.GetOwner().GetLogin(), repository.GetName(),
-		).Set(float64(*value))
-	}
-}
-
-var (
-	metrics []Metric
-
-	repoCount = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "github",
-		Name:      "repo_count",
-		Help:      "Number of Repositories",
-	}, []string{"owner"})
-
-	rateLimit = prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "github",
-		Name:      "rate_limit",
-		Help:      "API Rate Limit",
-	})
-	rateRemaining = prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "github",
-		Name:      "rate_remaining",
-		Help:      "API Rate Remaining",
-	})
-)
-
-func addMetric(metric Metric) {
-	gauge := prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "github",
-		Name:      metric.Name + "_count",
-		Help:      "Number of " + strings.Title(strings.Replace(metric.Name, "_", " ", -1)),
-	}, []string{"owner", "repository"})
-
-	prometheus.MustRegister(gauge)
-
-	metric.gauge = gauge
-	metrics = append(metrics, metric)
-}
-
-func init() {
-	// multi-value flags
-	flag.Var(&owners, "owner", "Repository owners to look for (multiple values are allowed)")
-	flag.Parse()
-
-	// prepare the metrics
-	prometheus.MustRegister(repoCount)
-	prometheus.MustRegister(rateLimit)
-	prometheus.MustRegister(rateRemaining)
-
-	addMetric(Metric{Name: "forks", Extractor: func(r *github.Repository) *int { return r.ForksCount }})
-	addMetric(Metric{Name: "networks", Extractor: func(r *github.Repository) *int { return r.NetworkCount }})
-	addMetric(Metric{Name: "open_issues", Extractor: func(r *github.Repository) *int { return r.OpenIssuesCount }})
-	addMetric(Metric{Name: "stargazers", Extractor: func(r *github.Repository) *int { return r.StargazersCount }})
-	addMetric(Metric{Name: "subscribers", Extractor: func(r *github.Repository) *int { return r.SubscribersCount }})
-	addMetric(Metric{Name: "watchers", Extractor: func(r *github.Repository) *int { return r.WatchersCount }})
-}
-
-func collectStats(client *github.Client) {
-	for _, owner := range owners {
-		log.Println("Collecting metrics for", owner)
-
-		collectStatsFor(owner, client)
-	}
-}
-
-func collectStatsFor(owner string, client *github.Client) {
-	totalCount := 0
-
-	opts := &github.RepositoryListOptions{ListOptions: github.ListOptions{PerPage: 100}}
-
-	for {
-		repos, resp, err := client.Repositories.List(context.Background(), owner, opts)
-		if err != nil {
-			fmt.Println("Failed to fetch page", opts.Page, "of the repos for", owner, ":", err)
-			return
-		}
-
-		rateLimit.Set(float64(resp.Rate.Limit))
-		rateRemaining.Set(float64(resp.Rate.Remaining))
-
-		totalCount += len(repos)
-
-		for _, repo := range repos {
-			for _, m := range metrics {
-				m.Update(repo)
-			}
-		}
-
-		if resp.NextPage == 0 {
-			break
-		}
-
-		opts.Page = resp.NextPage
-	}
-
-	repoCount.WithLabelValues(owner).Set(float64(totalCount))
-}
-
 func main() {
-	if len(owners) == 0 {
-		log.Fatal("No repository owners were defined")
+	if len(users) == 0 && len(orgs) == 0 {
+		fmt.Println("Usage:")
+		flag.PrintDefaults()
+		fmt.Println()
+
+		log.Fatal("No users or organizations were defined")
 	}
 
-	client := github.NewClient(httpcache.NewMemoryCacheTransport().Client())
+	client := github.NewClient(getApiClient())
 
 	go func() {
 		firstRun := time.After(0 * time.Second)
@@ -175,4 +42,97 @@ func main() {
 
 	http.Handle("/metrics", promhttp.Handler())
 	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(*port), nil))
+}
+
+func getApiClient() *http.Client {
+	var (
+		username string
+		password string
+	)
+
+	if *credentialsFile != "" {
+		if contents, err := ioutil.ReadFile(*credentialsFile); err != nil {
+			log.Fatalln("Failed to read the credentials file:", err)
+		} else {
+			parts := strings.SplitN(string(contents), ":", 2)
+			username = strings.TrimSpace(parts[0])
+			password = strings.TrimSpace(parts[1])
+		}
+	} else if *usernameVar != "" && *passwordVar != "" {
+		username = *usernameVar
+		password = *passwordVar
+	}
+
+	if username != "" && password != "" {
+		return (&github.BasicAuthTransport{
+			Username:  username,
+			Password:  password,
+			Transport: httpcache.NewMemoryCacheTransport(),
+		}).Client()
+	} else {
+		return httpcache.NewMemoryCacheTransport().Client()
+	}
+}
+
+func collectStats(client *github.Client) {
+	for _, user := range users {
+		log.Println("Collecting metrics for", user)
+
+		collectStatsFor(user,
+			func(opts github.ListOptions) ([]*github.Repository, *github.Response, error) {
+				return client.Repositories.List(
+					context.Background(), user, &github.RepositoryListOptions{ListOptions: opts})
+			})
+	}
+
+	for _, org := range orgs {
+		log.Println("Collecting metrics for", org)
+
+		collectStatsFor(org,
+			func(opts github.ListOptions) ([]*github.Repository, *github.Response, error) {
+				return client.Repositories.ListByOrg(
+					context.Background(), org, &github.RepositoryListByOrgOptions{ListOptions: opts})
+			})
+	}
+}
+
+func collectStatsFor(owner string, listFunc func(github.ListOptions) ([]*github.Repository, *github.Response, error)) {
+	totalCount := 0
+
+	opts := github.ListOptions{PerPage: 100}
+
+	for {
+		repos, resp, err := listFunc(opts) // client.Repositories.List(context.Background(), user, opts)
+		if err != nil {
+			log.Println("Failed to fetch page ", opts.Page, " of the repos for ", owner, ": ", err)
+			return
+		}
+
+		// update rate limit related metrics
+		rateLimit.Set(float64(resp.Rate.Limit))
+		rateRemaining.Set(float64(resp.Rate.Remaining))
+		rateReset.Set(float64(resp.Reset.UnixNano() / time.Millisecond.Nanoseconds()))
+
+		// update the repo metrics
+		for _, repo := range repos {
+			if *skipForks && repo.GetFork() {
+				continue
+			}
+
+			// keep track of the total number of repos
+			totalCount += 1
+
+			for _, m := range metrics {
+				m.Update(repo)
+			}
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+
+		opts.Page = resp.NextPage
+	}
+
+	repoCount.WithLabelValues(owner).Set(float64(totalCount))
 }
