@@ -15,21 +15,23 @@ The command line parameters are like this:
 ```
 Usage of /exporter:
   -credentials path
-      	File path containing the authentication details in `username:password` format (optional)
+        File path containing the authentication details in `username:password` format (optional)
   -interval duration
-      	Interval between checks (default 15m0s)
+        Interval between checks (default 15m0s)
   -org value
-      	Organizations to list repositories for (multiple values are allowed)
+        Organizations to list repositories for (multiple values are allowed)
   -password string
-      	Password for authenticated API calls (optional)
+        Password for authenticated API calls (optional)
   -port int
-      	The HTTP port to listen on (default 8080)
+        The HTTP port to listen on (default 8080)
   -skip-forks
-      	Do not pull metrics for forked repositories
+        Do not pull metrics for forked repositories
+  -timeout duration
+        HTTP API call timeout (default 15s)
   -user value
-      	Users to list repositories for (multiple values are allowed)
+        Users to list repositories for (multiple values are allowed)
   -username string
-      	Username for authenticated API calls (optional)
+        Username for authenticated API calls (optional)
 ```
 
 The Docker image reference points to a multi-arch manifest, with the actual images being available for the `amd64`, `armhf` and `arm64v8` platforms.

@@ -64,13 +64,19 @@ func getApiClient() *http.Client {
 	}
 
 	if username != "" && password != "" {
-		return (&github.BasicAuthTransport{
-			Username:  username,
-			Password:  password,
-			Transport: httpcache.NewMemoryCacheTransport(),
-		}).Client()
+		return &http.Client{
+			Transport: &github.BasicAuthTransport{
+				Username:  username,
+				Password:  password,
+				Transport: httpcache.NewMemoryCacheTransport(),
+			},
+			Timeout: *timeout,
+		}
 	} else {
-		return httpcache.NewMemoryCacheTransport().Client()
+		return &http.Client{
+			Transport: httpcache.NewMemoryCacheTransport(),
+			Timeout:   *timeout,
+		}
 	}
 }
 

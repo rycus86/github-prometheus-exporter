@@ -14,6 +14,8 @@ import (
 )
 
 func TestCollectStatsForUser(t *testing.T) {
+	repoCount.Reset()
+
 	for _, m := range metrics {
 		m.gauge.Reset()
 	}
@@ -68,6 +70,14 @@ func TestCollectStatsForUser(t *testing.T) {
 			labels := m.GetLabel()
 			value := m.GetGauge().GetValue()
 
+			if name == "github_repo_count" {
+				if value != 59 {
+					t.Error("Unexpected value:", name, m.String())
+				}
+
+				tests["count"] = 1
+			}
+
 			if labelMatches(labels, "repository", "docker-prometheus") {
 				if name == "github_watchers_count" && value != 7.0 {
 					t.Error("Unexpected value:", name, m.String())
@@ -90,12 +100,14 @@ func TestCollectStatsForUser(t *testing.T) {
 		}
 	}
 
-	if len(tests) != 2 {
-		t.Error("Only checked", len(tests), "metrics, but expected 2")
+	if len(tests) != 3 {
+		t.Error("Only checked", len(tests), "metrics, but expected 3")
 	}
 }
 
 func TestCollectStatsForOrg(t *testing.T) {
+	repoCount.Reset()
+
 	for _, m := range metrics {
 		m.gauge.Reset()
 	}
@@ -135,6 +147,14 @@ func TestCollectStatsForOrg(t *testing.T) {
 			labels := m.GetLabel()
 			value := m.GetGauge().GetValue()
 
+			if name == "github_repo_count" {
+				if value != 30 {
+					t.Error("Unexpected value:", name, m.String())
+				}
+
+				tests["count"] = 1
+			}
+
 			if labelMatches(labels, "repository", "docker-py") {
 				if name == "github_watchers_count" && value != 3081.0 {
 					t.Error("Unexpected value:", name, m.String())
@@ -157,8 +177,8 @@ func TestCollectStatsForOrg(t *testing.T) {
 		}
 	}
 
-	if len(tests) != 2 {
-		t.Error("Only checked", len(tests), "metrics, but expected 2")
+	if len(tests) != 3 {
+		t.Error("Only checked", len(tests), "metrics, but expected 3")
 	}
 }
 

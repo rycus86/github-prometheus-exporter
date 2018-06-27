@@ -8,6 +8,7 @@ import (
 var (
 	port      = flag.Int("port", 8080, "The HTTP port to listen on")
 	interval  = flag.Duration("interval", 15*time.Minute, "Interval between checks")
+	timeout   = flag.Duration("timeout", 15*time.Second, "HTTP API call timeout")
 	skipForks = flag.Bool("skip-forks", false, "Do not pull metrics for forked repositories")
 
 	users multiVar
